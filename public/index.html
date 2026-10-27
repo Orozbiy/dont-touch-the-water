@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ky">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Don't Touch The Water</title>
+<style>
+  :root {
+    --bg: #0a1628;
+    --panel: #10213b;
+    --panel2: #152a4a;
+    --accent: #4fd1c5;
+    --accent2: #ff5a5f;
+    --text: #e8f1ff;
+    --muted: #7c93b8;
+    --water: #2b7fd6;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: radial-gradient(circle at 50% 0%, #142544, #060d1c 70%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    touch-action: none;
+  }
+  #app { position: relative; width: 100vw; height: 100vh; }
+
+  /* ---------- Screens ---------- */
+  .screen {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px;
+    padding: 24px; text-align: center;
+  }
+  .hidden { display: none !important; }
+
+  .logo {
+    font-size: 28px; font-weight: 800; letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--accent), #6ee7ff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .logo .drop { -webkit-text-fill-color: initial; background: none; color: var(--accent2); }
+  .sub { color: var(--muted); font-size: 14px; margin-top: -8px; }
+
+  .card {
+    background: var(--panel); border: 1px solid #1f3a5f; border-radius: 18px;
+    padding: 22px; width: min(360px, 92vw);
+    box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+  }
+  input[type=text] {
+    width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid #27466f;
+    background: var(--panel2); color: var(--text); font-size: 16px; margin-bottom: 10px;
+    outline: none;
+  }
+  input[type=text]:focus { border-color: var(--accent); }
+  input[type=text]::placeholder { color: var(--muted); }
+
+  button {
+    font-family: inherit; cursor: pointer; border: none; border-radius: 12px;
+    font-weight: 700; font-size: 16px; padding: 14px 18px; width: 100%;
+    transition: transform .08s ease, opacity .15s ease;
+  }
+  button:active { transform: scale(0.97); }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), #2bb6a8); color: #06241f; }
+  .btn-secondary { background: var(--panel2); color: var(--text); border: 1px solid #2a4a74; }
+  .btn-danger { background: linear-gradient(135deg, var(--accent2), #c23b40); color: #2b0506; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+
+  .code-display {
+    font-size: 34px; font-weight: 800; letter-spacing: 6px; color: var(--accent);
+    background: var(--panel2); border-radius: 12px; padding: 12px; margin: 4px 0 14px;
+    border: 1px dashed #2a4a74; user-select: all;
+  }
+
+  .playerlist { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 10px 0 18px; }
+  .chip {
+    display: flex; align-items: center; gap: 6px; background: var(--panel2);
+    border-radius: 999px; padding: 6px 12px 6px 6px; font-size: 13px; font-weight: 600;
+  }
+  .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+
+  /* ---------- Game screen ---------- */
+  #gameScreen { padding: 0; }
+  #canvasWrap { position: relative; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  .hud {
+    position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between;
+    align-items: flex-start; padding: calc(10px + env(safe-area-inset-top)) 14px 0; pointer-events: none;
+  }
+  .hud-pill {
+    background: rgba(10,22,40,0.72); backdrop-filter: blur(6px); border: 1px solid #2a4a74;
+    border-radius: 999px; padding: 8px 14px; font-weight: 700; font-size: 14px; pointer-events: auto;
+  }
+  #timer { color: var(--accent); }
+  #aliveCount { color: #ffd166; }
+
+  .controls {
+    position: absolute; bottom: calc(18px + env(safe-area-inset-bottom)); left: 0; right: 0;
+    display: flex; justify-content: center; pointer-events: none;
+  }
+  .dpad {
+    display: grid; grid-template-columns: 62px 62px 62px; grid-template-rows: 62px 62px 62px;
+    gap: 6px; pointer-events: auto;
+  }
+  .dpad button {
+    width: 62px; height: 62px; padding: 0; border-radius: 16px;
+    background: rgba(21,42,74,0.85); border: 1px solid #2a4a74; color: var(--text);
+    font-size: 22px; display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(4px);
+  }
+  .dpad button:active { background: rgba(79,209,197,0.35); }
+  .dpad .up { grid-column: 2; grid-row: 1; }
+  .dpad .left { grid-column: 1; grid-row: 2; }
+  .dpad .right { grid-column: 3; grid-row: 2; }
+  .dpad .down { grid-column: 2; grid-row: 2; }
+  .dpad .ghost { visibility: hidden; }
+
+  #toast {
+    position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 26px; font-weight: 800; text-align: center; pointer-events: none;
+    text-shadow: 0 4px 18px rgba(0,0,0,0.6);
+    opacity: 0; transition: opacity .3s ease;
+  }
+  #toast.show { opacity: 1; }
+
+  .result-list { max-height: 40vh; overflow-y: auto; width: 100%; }
+  .result-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    background: var(--panel2); border-radius: 10px; margin-bottom: 8px; font-weight: 600;
+  }
+  .result-row .medal { width: 24px; text-align: center; font-size: 18px; }
+
+  #connStatus {
+    position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 14px;
+    font-size: 11px; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- JOIN SCREEN -->
+  <div id="joinScreen" class="screen">
+    <div class="logo">Don't Touch The <span class="drop">Water</span> 💧</div>
+    <div class="sub">Достор менен кошулуп ойно — платформа кулат, суу көтөрүлөт</div>
+    <div class="card">
+      <input id="nameInput" type="text" placeholder="Атыңды жаз" maxlength="16">
+      <input id="codeInput" type="text" placeholder="Бөлмө коду (боштон калтырсаң — жаңы бөлмө)" maxlength="6" style="text-transform:uppercase">
+      <div class="row">
+        <button class="btn-primary" id="joinBtn">Кошулуу / Жаратуу</button>
+      </div>
+    </div>
+    <div id="connStatus2" class="sub" style="margin-top:4px;"></div>
+  </div>
+
+  <!-- LOBBY SCREEN -->
+  <div id="lobbyScreen" class="screen hidden">
+    <div class="logo" style="font-size:20px;">Бөлмө коду</div>
+    <div class="code-display" id="roomCode">-----</div>
+    <div class="sub">Бул кодду досторуңа жөнөт — алар да ушул линкке кирип, ушул кодду жазышсын</div>
+    <div class="playerlist" id="playerList"></div>
+    <div class="card" style="padding:14px;">
+      <button class="btn-primary" id="startBtn">Оюнду баштоо</button>
+      <div class="sub" id="waitingNote" style="margin-top:10px;">Башталганда бардык кошулгандар ойной баштайт</div>
+    </div>
+  </div>
+
+  <!-- GAME SCREEN -->
+  <div id="gameScreen" class="screen hidden">
+    <div id="canvasWrap">
+      <canvas id="canvas"></canvas>
+      <div class="hud">
+        <div class="hud-pill" id="timer">0с</div>
+        <div class="hud-pill" id="aliveCount">0 👤</div>
+      </div>
+      <div id="connStatus"></div>
+      <div id="toast"></div>
+      <div class="controls">
+        <div class="dpad">
+          <div class="ghost"></div>
+          <button class="up" data-dir="up">▲</button>
+          <div class="ghost"></div>
+          <button class="left" data-dir="left">◀</button>
+          <button class="down" data-dir="down">▼</button>
+          <button class="right" data-dir="right">▶</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESULT SCREEN -->
+  <div id="resultScreen" class="screen hidden">
+    <div class="logo" style="font-size:24px;" id="resultTitle">Оюн бүттү!</div>
+    <div class="card">
+      <div class="result-list" id="resultList"></div>
+      <div class="row" style="margin-top:4px;">
+        <button class="btn-primary" id="playAgainBtn">Дагы ойноо</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>

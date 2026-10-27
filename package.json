@@ -1,0 +1,14 @@
+{
+  "name": "dont-touch-the-water",
+  "version": "1.0.0",
+  "description": "Multiplayer browser game - survive rising water and falling platforms",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0"
+  }
+}
