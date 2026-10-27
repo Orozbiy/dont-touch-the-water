@@ -8,6 +8,7 @@
 
   const nameInput = $('nameInput');
   const codeInput = $('codeInput');
+  const createBtn = $('createBtn');
   const joinBtn = $('joinBtn');
   const roomCodeEl = $('roomCode');
   const playerListEl = $('playerList');
@@ -26,13 +27,22 @@
   let roomCode = null;
   let players = [];
   let platforms = [];
+  let gridN = 5, cell = 3.4;
   let monster = { x: 0, z: 0, phase: 'lurk', targetId: null };
   let gameState = 'lobby';
   let elapsedMs = 0;
 
+  let roundPhase = 'clear';
+  let litPlatformId = null;
+  let roundNum = 0;
+  let seqLength = 0;
+
   nameInput.value = localStorage.getItem('dtw_name') || '';
   const urlCode = new URLSearchParams(location.search).get('room');
-  if (urlCode) codeInput.value = urlCode.toUpperCase();
+  if (urlCode) {
+    codeInput.value = urlCode.toUpperCase();
+    joinBtn.textContent = 'Бөлмөгө кирүү (' + urlCode.toUpperCase() + ')';
+  }
 
   function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
@@ -64,10 +74,22 @@
     el.classList.remove('hidden');
   }
 
-  joinBtn.addEventListener('click', () => {
+  createBtn.addEventListener('click', () => {
     const name = nameInput.value.trim() || 'Oюнчу';
     localStorage.setItem('dtw_name', name);
+    send({ t: 'join', name, code: '' });
+  });
+
+  joinBtn.addEventListener('click', () => {
+    const name = nameInput.value.trim() || 'Oюнчу';
     const code = codeInput.value.trim().toUpperCase();
+    if (!code) {
+      codeInput.focus();
+      codeInput.placeholder = 'Алгач бөлмө кодун жаз!';
+      codeInput.style.borderColor = 'var(--accent2)';
+      return;
+    }
+    localStorage.setItem('dtw_name', name);
     send({ t: 'join', name, code });
   });
 
@@ -121,6 +143,7 @@
       roomCode = msg.code;
       players = msg.players;
       platforms = msg.platforms;
+      gridN = msg.gridN; cell = msg.cell;
       roomCodeEl.textContent = roomCode;
       history.replaceState(null, '', '?room=' + roomCode);
       renderPlayerList();
@@ -140,10 +163,17 @@
       players = msg.players;
       platforms = msg.platforms;
       gameState = 'playing';
-      myPos.x = players.find(p => p.id === myId)?.x ?? 0;
-      myPos.z = players.find(p => p.id === myId)?.z ?? 0;
+      const me = players.find(p => p.id === myId);
+      myPos.x = me ? me.x : 0;
+      myPos.z = me ? me.z : 0;
       showScreen(gameScreen);
       onResize();
+      return;
+    }
+    if (msg.t === 'round') {
+      roundNum = msg.round;
+      seqLength = msg.length;
+      showRoundBanner(roundNum);
       return;
     }
     if (msg.t === 'tick') {
@@ -151,12 +181,16 @@
       const prevAlive = new Map(players.map(p => [p.id, p.alive]));
       players = msg.players;
       monster = msg.monster;
+      roundPhase = msg.phase;
+      litPlatformId = msg.litPlatform;
+      seqLength = msg.seqLength;
       const me = players.find(p => p.id === myId);
       if (me && prevAlive.get(myId) !== false && me.alive === false) {
         showToast('💀 Сени кармап алышты!', '#ff5a5f');
       }
-      timerEl.textContent = Math.floor(elapsedMs / 1000) + 'с';
+      timerEl.textContent = (roundPhase === 'show' ? 'Карма!' : roundPhase === 'repeat' ? 'Кайталоо' : 'Даярдан...');
       aliveCountEl.textContent = players.filter(p => p.alive).length + ' 👤';
+      updateProgressUI();
       return;
     }
     if (msg.t === 'end') {
@@ -164,6 +198,44 @@
       players = msg.players;
       showResult(msg.winner);
       return;
+    }
+  }
+
+  // ---------- Round banner ("3... REMEMBER THEM") ----------
+  let roundBannerTimeout = null;
+  function showRoundBanner(n) {
+    let el = document.getElementById('roundBanner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'roundBanner';
+      el.style.cssText = 'position:absolute;top:30%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;z-index:5;';
+      canvasWrap.appendChild(el);
+    }
+    el.innerHTML = `<div style="font-size:54px;font-weight:900;color:#6ee7ff;text-shadow:0 0 24px rgba(110,231,255,0.7),0 4px 12px rgba(0,0,0,0.6);">${n}</div><div style="font-size:20px;font-weight:700;letter-spacing:3px;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,0.7);margin-top:4px;">ЭСТЕП КАЛ</div>`;
+    el.style.opacity = '1';
+    clearTimeout(roundBannerTimeout);
+    roundBannerTimeout = setTimeout(() => { el.style.transition = 'opacity .5s'; el.style.opacity = '0'; }, 1400);
+  }
+
+  // ---------- Progress UI (dots for sequence progress) ----------
+  function updateProgressUI() {
+    let el = document.getElementById('progressBar');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'progressBar';
+      el.style.cssText = 'position:absolute;top:60px;left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:5;';
+      canvasWrap.appendChild(el);
+    }
+    if (roundPhase !== 'repeat' || !seqLength) { el.style.display = 'none'; return; }
+    el.style.display = 'flex';
+    const me = players.find(p => p.id === myId);
+    const prog = me ? (me.progress || 0) : 0;
+    el.innerHTML = '';
+    for (let i = 0; i < seqLength; i++) {
+      const dot = document.createElement('div');
+      const done = i < prog;
+      dot.style.cssText = `width:14px;height:14px;border-radius:50%;background:${done ? '#4fd1c5' : 'rgba(255,255,255,0.15)'};border:1px solid rgba(255,255,255,0.3);transition:background .2s;`;
+      el.appendChild(dot);
     }
   }
 
@@ -197,10 +269,11 @@
   // ---------- Three.js scene ----------
   let renderer, scene, camera;
   let waterMesh, waterMat;
-  let playerMeshes = new Map(); // id -> group
-  let monsterGroup, monsterBody;
+  let playerMeshes = new Map();
+  let monsterGroup;
   let clock = new THREE.Clock();
   let arenaBuilt = false;
+  let platformMeshes = new Map(); // id -> {mesh, baseMat, litMat}
 
   function initThree() {
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -210,7 +283,7 @@
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a1628);
-    scene.fog = new THREE.Fog(0x0a1628, 18, 40);
+    scene.fog = new THREE.Fog(0x0a1628, 20, 44);
 
     camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
 
@@ -241,51 +314,47 @@
     if (arenaBuilt || !platforms.length) return;
     arenaBuilt = true;
 
-    const ARENA = 11;
+    const half = (gridN * cell) / 2;
+    const ARENA = half + 4;
     const HEIGHT = 9;
 
-    // --- room shell: floor far below, 4 walls, no roof so we can see down ---
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x24344f, roughness: 0.9, metalness: 0.05, side: THREE.BackSide });
     const room = new THREE.Mesh(new THREE.BoxGeometry(ARENA * 2, HEIGHT, ARENA * 2), wallMat);
     room.position.set(0, HEIGHT / 2 - 3, 0);
     room.receiveShadow = true;
     scene.add(room);
 
-    // deep floor (below water) dark
     const floorMat = new THREE.MeshStandardMaterial({ color: 0x0d1322, roughness: 1 });
     const floor = new THREE.Mesh(new THREE.BoxGeometry(ARENA * 2, 0.2, ARENA * 2), floorMat);
     floor.position.set(0, -4, 0);
     scene.add(floor);
 
-    // --- water surface ---
     waterMat = new THREE.MeshStandardMaterial({
       color: 0x1f6fc9, transparent: true, opacity: 0.78, roughness: 0.15, metalness: 0.3,
     });
     waterMesh = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2 - 0.4, ARENA * 2 - 0.4, 24, 24), waterMat);
     waterMesh.rotation.x = -Math.PI / 2;
-    waterMesh.position.y = -0.15;
+    waterMesh.position.y = -0.1;
     scene.add(waterMesh);
 
-    // --- platforms ---
-    const platMat = new THREE.MeshStandardMaterial({ color: 0xd9b36c, roughness: 0.8 });
-    const platMatAlt = new THREE.MeshStandardMaterial({ color: 0xc89f58, roughness: 0.8 });
-    platforms.forEach((p, i) => {
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0xd9b36c, roughness: 0.8, emissive: 0x000000 });
+    platforms.forEach((p) => {
       const geo = new THREE.BoxGeometry(p.w, 0.5, p.d);
-      const mesh = new THREE.Mesh(geo, i % 2 === 0 ? platMat : platMatAlt);
+      const mat = baseMat.clone();
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(p.x, p.y - 0.25, p.z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       scene.add(mesh);
-      // thin edge trim for visibility
       const edges = new THREE.LineSegments(
         new THREE.EdgesGeometry(geo),
         new THREE.LineBasicMaterial({ color: 0x5a4523, transparent: true, opacity: 0.5 })
       );
       edges.position.copy(mesh.position);
       scene.add(edges);
+      platformMeshes.set(p.id, { mesh, mat });
     });
 
-    // --- monster (dark humanoid-ish creature) ---
     monsterGroup = new THREE.Group();
     const mBodyMat = new THREE.MeshStandardMaterial({ color: 0x1a0f1f, roughness: 0.6, emissive: 0x3a0a3a, emissiveIntensity: 0.4 });
     const mEyeMat = new THREE.MeshStandardMaterial({ color: 0xff2b2b, emissive: 0xff2b2b, emissiveIntensity: 2 });
@@ -300,7 +369,6 @@
       eye.position.set(ex, 1.18, 0.28);
       monsterGroup.add(eye);
     });
-    // spiky tendrils around
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2;
       const spike = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.5, 5), mBodyMat);
@@ -310,16 +378,13 @@
       monsterGroup.add(spike);
     }
     monsterGroup.visible = false;
-    monsterBody = { torso, head };
     scene.add(monsterGroup);
 
-    camera.position.set(0, 13, 15);
+    camera.position.set(0, half + 7, half + 10);
     camera.lookAt(0, 0, 0);
   }
 
-  function colorToHex(c) {
-    return new THREE.Color(c).getHex();
-  }
+  function colorToHex(c) { return new THREE.Color(c).getHex(); }
 
   function ensurePlayerMesh(p) {
     if (playerMeshes.has(p.id)) return playerMeshes.get(p.id);
@@ -337,7 +402,6 @@
     head.castShadow = true;
     group.add(head);
 
-    // simple arms
     const armGeo = new THREE.CapsuleGeometry(0.08, 0.4, 4, 6);
     [-1, 1].forEach(side => {
       const arm = new THREE.Mesh(armGeo, cloth);
@@ -346,7 +410,6 @@
       group.add(arm);
     });
 
-    // name label via sprite
     const canvas = document.createElement('canvas');
     canvas.width = 256; canvas.height = 64;
     const ctx2d = canvas.getContext('2d');
@@ -371,14 +434,25 @@
   function removeStaleMeshes() {
     const ids = new Set(players.map(p => p.id));
     for (const [id, mesh] of playerMeshes) {
-      if (!ids.has(id)) {
-        scene.remove(mesh);
-        playerMeshes.delete(id);
+      if (!ids.has(id)) { scene.remove(mesh); playerMeshes.delete(id); }
+    }
+  }
+
+  function updatePlatformLighting(t) {
+    for (const [id, obj] of platformMeshes) {
+      const isLit = id === litPlatformId;
+      if (isLit) {
+        const pulse = 0.5 + Math.sin(t * 10) * 0.3;
+        obj.mat.emissive.setHex(0xffffff);
+        obj.mat.emissiveIntensity = 1.2 + pulse;
+        obj.mat.color.setHex(0xffffff);
+      } else {
+        obj.mat.emissiveIntensity = 0;
+        obj.mat.color.setHex(0xd9b36c);
       }
     }
   }
 
-  // ---------- Game loop ----------
   let lastSendTime = 0;
   function animate() {
     requestAnimationFrame(animate);
@@ -386,7 +460,6 @@
     const t = clock.elapsedTime;
 
     if (gameState === 'playing' && arenaBuilt) {
-      // local movement prediction
       let dx = 0, dz = 0;
       if (keys.up) dz -= 1;
       if (keys.down) dz += 1;
@@ -406,7 +479,6 @@
       }
 
       removeStaleMeshes();
-      let myAliveState = true;
       players.forEach(p => {
         const mesh = ensurePlayerMesh(p);
         const targetX = p.id === myId ? myPos.x : p.x;
@@ -414,19 +486,16 @@
         mesh.position.x += (targetX - mesh.position.x) * Math.min(1, dt * 12);
         mesh.position.z += (targetZ - mesh.position.z) * Math.min(1, dt * 12);
         mesh.position.y = p.y + (p.alive ? Math.sin(t * 3 + p.x) * 0.03 : -0.6);
-        mesh.visible = true;
-        mesh.children.forEach(c => { if (c.material) c.material.opacity = p.alive ? 1 : 0.3; });
-        mesh.traverse(c => { if (c.material && c.material.transparent === false && !p.alive) { c.material.transparent = true; } });
-        if (p.id === myId) myAliveState = p.alive;
+        mesh.children.forEach(c => { if (c.material) { c.material.transparent = true; c.material.opacity = p.alive ? 1 : 0.3; } });
       });
 
-      // monster visual
+      updatePlatformLighting(t);
+
       if (monster && monster.phase === 'strike' && monster.targetId) {
         monsterGroup.visible = true;
         monsterGroup.position.x += (monster.x - monsterGroup.position.x) * Math.min(1, dt * 14);
         monsterGroup.position.z += (monster.z - monsterGroup.position.z) * Math.min(1, dt * 14);
         monsterGroup.position.y = -0.3 + Math.sin(t * 20) * 0.08;
-        monsterGroup.lookAt(monsterGroup.position.x, -0.3, monsterGroup.position.z - 1);
         const target = players.find(pp => pp.id === monster.targetId);
         if (target) monsterGroup.lookAt(target.x, -0.3, target.z);
       } else {
@@ -436,7 +505,6 @@
         monsterGroup.visible = monsterGroup.position.y > -1.9;
       }
 
-      // water animation
       if (waterMesh) {
         const pos = waterMesh.geometry.attributes.position;
         for (let i = 0; i < pos.count; i++) {
@@ -448,14 +516,12 @@
         waterMesh.geometry.computeVertexNormals();
       }
 
-      // camera: follow my player from above at an angle
-      const me = players.find(p => p.id === myId);
-      const followX = me ? (p => p)(myPos.x) : 0;
-      const followZ = me ? myPos.z : 0;
-      const camTarget = new THREE.Vector3(followX * 0.4, 0, followZ * 0.4 + 4);
-      const desired = new THREE.Vector3(followX * 0.3, 12, followZ * 0.5 + 11);
+      const followX = myPos.x;
+      const followZ = myPos.z;
+      const half = (gridN * cell) / 2;
+      const desired = new THREE.Vector3(followX * 0.25, half + 7, followZ * 0.3 + half + 6);
       camera.position.lerp(desired, Math.min(1, dt * 2.2));
-      camera.lookAt(followX * 0.3, -0.5, followZ * 0.3);
+      camera.lookAt(followX * 0.2, -0.5, followZ * 0.2);
     }
 
     if (renderer && scene && camera) renderer.render(scene, camera);
